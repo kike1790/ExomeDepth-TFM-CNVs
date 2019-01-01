@@ -1,0 +1,115 @@
+
+---
+title: "ExomeDepth E.Sevilla"
+author: "E.Sevilla"
+date: "29/11/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+######Cargamos las librerias###########
+######Cargamos el Bedfile y Genoma de Referencia ######
+```{r}
+library(ExomeDepth)
+bedfile <- file.path("/Users/enriquesevillaromero/ICR96_datos", "bedfile_n_rs.txt") 
+targets <-read.table(bedfile, header = T) 
+b37 <- file.path("/Users/enriquesevillaromero/DATOS/genoma_indexado/Homo_sapiens.GRCh37.dna.primary_assembly.fa")  
+#######################################
+#### Cargamos a las muestras control
+##################################
+my.bam_control <- list.files("/Users/enriquesevillaromero/DATOS/NORMAL/POOL1", pattern = '*.bam$')
+bamFile_control <- file.path("/Users/enriquesevillaromero/DATOS/NORMAL/POOL1",my.bam_control)
+
+#####Generamos la matriz de contajes#####
+data_Control <- getBamCounts(bed.frame = targets,
+                          bam.files = bamFile_control,
+                          include.chr = FALSE,
+                         referenceFasta = b37) 
+
+
+library(ExomeDepth)
+data(data_Control)
+Control_ExomeCount.dafr <- as(data_Control[, colnames(data_Control)], 'data.frame')###
+Control_ExomeCount.dafr$chromosome <- gsub(as.character(Control_ExomeCount.dafr$space), pattern = 'chr',replacement = '')
+print(head(Control_ExomeCount.dafr))
+
+Control_ExomeCount.mat <- as.matrix(Control_ExomeCount.dafr[, grep(names(Control_ExomeCount.dafr), pattern = '.*bam')])
+Control_nsamples <-ncol(Control_ExomeCount.mat)
+
+#######################################
+####Cargamos a las muestras Tumorales
+##################################
+my.bam.tumor <- list.files("/Users/enriquesevillaromero/DATOS/TUMOR/POOL1",  pattern = '*.bam$')
+
+bamFile.tumor <- file.path("/Users/enriquesevillaromero/DATOS/TUMOR/POOL1",my.bam.tumor)
+
+data_Tumor <- getBamCounts(bed.frame = targets,
+                          bam.files = bamFile.tumor,
+                          include.chr = FALSE,
+                        referenceFasta = b37) 
+
+
+data(data_Tumor)
+Tumor_ExomeCount.dafr <- as(data_Tumor[, colnames(data_Tumor)], 'data.frame')
+Tumor_ExomeCount.dafr$chromosome <- gsub(as.character(Tumor_ExomeCount.dafr$space), pattern = 'chr',replacement = '')
+
+
+Tumor_ExomeCount.mat <- as.matrix(Tumor_ExomeCount.dafr[, grep(names(Tumor_ExomeCount.dafr), pattern = '.*bam')])
+Tumor_nsamples <-ncol(Tumor_ExomeCount.mat)
+Tumor_samples <- colnames(Tumor_ExomeCount.dafr)
+```
+
+
+```{r}
+## selección de los controles##
+
+my.ref.samples <- c ("EGAR00001545910_17300.sort.nd.covered.bam","EGAR00001545918_17308.sort.nd.covered.bam","EGAR00001545919_17309.sort.nd.covered.bam","EGAR00001545920_17310.sort.nd.covered.bam","EGAR00001545921_17311.sort.nd.covered.bam","EGAR00001545922_17312.sort.nd.covered.bam","EGAR00001545923_17313.sort.nd.covered.bam","EGAR00001545924_17314.sort.nd.covered.bam","EGAR00001545925_17315.sort.nd.covered.bam","EGAR00001545938_17328.sort.nd.covered.bam")
+
+my.ref.sample.set <- as.matrix(Control_ExomeCount.dafr[, my.ref.samples])
+
+###Creamos un bucle para analizar todas las muestras tumor########
+for (i in 1:Tumor_nsamples) {
+  
+  samplename <- Tumor_samples[i + 6]
+  
+  print(samplename)
+  
+my.choice_1t_Ac <- select.reference.set (test.counts = Tumor_ExomeCount.mat[,i],
+                                   reference.counts = my.ref.sample.set,
+                                   bin.length = (Control_ExomeCount.dafr$end - Control_ExomeCount.dafr$start)/1000, 
+                                   n.bins.reduced = 10000)
+
+
+
+my.matrix <- as.matrix( Control_ExomeCount.dafr[, my.choice_1t_Ac$reference.choice]) 
+my.reference.selected <- apply(X = my.matrix,MAR = 1, FUN = sum)
+
+
+all.exons_1t_ac <- new('ExomeDepth',
+                        test = Tumor_ExomeCount.mat[,i],
+                         reference = my.reference.selected, 
+                          formula = 'cbind(test, reference) ~ 1')
+
+show(all.exons_1t_ac)
+####Llamanos a todas las CNVs######
+all_exons_CNVs <- CallCNVs(x = all.exons_1t_ac,
+  transition.probability = 10^-3, ###este parametro lo he bajado a 10^-3 , era 10^-4 . porque no salia ninguna CALL parametro.
+  chromosome = Control_ExomeCount.dafr$space,
+  start = Control_ExomeCount.dafr$start,
+  end = Control_ExomeCount.dafr$end,
+  name = Control_ExomeCount.dafr$names)
+head(all_exons_CNVs@CNV.calls)
+
+###Imprimimos en un artchivo de salida las CNVs encontradas######
+if(nrow(all_exons_CNVs@CNV.calls)>0){
+        output.file <- paste0(i ,".cnv.txt")
+        write.table(file = file.path("/Users/enriquesevillaromero/DATOS/ExomeDepth/All_NvsNpool1_12",output.file),x = cbind(i,all_exons_CNVs@CNV.calls),row.names = FALSE,quote=F,sep="\t")
+}
+}
+
+```
